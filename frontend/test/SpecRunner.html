@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Public Transport API Tests</title>
+
+    <!-- Jasmine CSS -->
+    <link rel="shortcut icon" type="image/png" href="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/jasmine_favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/jasmine.css">
+
+    <!-- Jasmine JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/jasmine.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/jasmine-html.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/boot0.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jasmine/4.6.0/boot1.js"></script>
+
+    <!-- Mock CONFIG and MESSAGES objects needed by the API -->
+    <script>
+        // Mock the CONFIG object that the API depends on
+        const CONFIG = {
+            API_BASE_URL: '/public_transport/city/Wroclaw'
+        };
+
+        // Mock the MESSAGES object (not used by API but might be referenced)
+        const MESSAGES = {
+            NO_DEPARTURES: 'No departures found for the selected route.',
+            SELECT_POINTS: 'Please select both start and destination points on the map.',
+            SELECT_START: '📍 Select START point first',
+            SELECT_DESTINATION: '📍 Select DESTINATION point',
+            SEARCHING: '🔄 Searching...',
+            FIND_DEPARTURES: '🔍 Find Departures',
+            SEARCH_ERROR: 'Failed to search departures. Please try again.',
+            TRIP_DETAILS_ERROR: 'Failed to load trip details. Please try again.'
+        };
+
+        // Extract just the PublicTransportAPI class for testing
+        class PublicTransportAPI {
+            static async getClosestDepartures(startCoords, endCoords, startTime, limit) {
+                const params = new URLSearchParams({
+                    start_coordinates: `${startCoords.lat},${startCoords.lng}`,
+                    end_coordinates: `${endCoords.lat},${endCoords.lng}`,
+                    start_time: startTime,
+                    limit: limit
+                });
+
+                const response = await fetch(`${CONFIG.API_BASE_URL}/closest_departures?${params}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return response.json();
+            }
+
+            static async getTripDetails(tripId) {
+                const response = await fetch(`${CONFIG.API_BASE_URL}/trip/${tripId}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return response.json();
+            }
+        }
+    </script>
+
+    <!-- Test specs -->
+    <script src="spec/publicTransportApiSpec.js"></script>
+</head>
+
+<body>
+    <h1>Public Transport API Test Suite</h1>
+    <p>This page runs Jasmine tests for the PublicTransportAPI class.</p>
+</body>
+</html>

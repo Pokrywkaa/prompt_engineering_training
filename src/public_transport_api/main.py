@@ -1,12 +1,18 @@
-# from flask import Flask
-# from flask_cors import CORS
+from pathlib import Path
 
+from controllers.departures_controller import departures_bp
+from controllers.trips_controller import trips_bp
+from flask import Flask, render_template
+from flask_cors import CORS
 
-# from controllers.departures_controller import departures_bp
-# from controllers.trips_controller import trips_bp
+template_folder = Path(__file__).parent.parent.parent / "frontend"
+static_folder = template_folder / "static"
 
-
-# app = Flask(__name__)
+app = Flask(
+    __name__,
+    static_folder=static_folder.resolve(),
+    template_folder=template_folder.resolve(),
+)
 
 # CORS(app)
 
@@ -563,4 +569,4 @@ def api_trip_details(city, trip_id):
     return jsonify(response_body), 200
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=True, port=5002)
