@@ -5,7 +5,7 @@ const CONFIG = {
     MAX_ZOOM: 18,
     TILE_URL: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     TILE_ATTRIBUTION: '© OpenStreetMap contributors',
-    API_BASE_URL: '/public_transport/city/Wroclaw',
+    API_BASE_URL: 'http://127.0.0.1:5002/public_transport/city/Wroclaw',
     MARKER_ICONS: {
         start: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
         end: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
@@ -39,7 +39,7 @@ class PublicTransportAPI {
             limit: limit
         });
 
-        const response = await fetch(`${CONFIG.API_BASE_URL}/closest_departures?${params}`);
+        const response = await fetch(`${CONFIG.API_BASE_URL}/closest_departures/?${params}`);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -190,12 +190,24 @@ class MapManager {
                 icon: this.createMarkerIcon('departure')
             }).addTo(this.map);
 
-            const departureTime = new Date(departure.stop.departure_time);
+            // Handle both time formats: ISO datetime or just time string
+            let departureTimeDisplay;
+            const departureTimeValue = departure.stop.departure_time;
+
+            if (departureTimeValue.includes('T')) {
+                // ISO datetime format
+                const departureTime = new Date(departureTimeValue);
+                departureTimeDisplay = departureTime.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+            } else {
+                // Just time format (e.g., "10:00:00")
+                departureTimeDisplay = departureTimeValue.substring(0, 5); // Extract HH:MM
+            }
+
             marker.bindPopup(`
                 <strong>${departure.stop.name}</strong><br>
                 Route: <span style="background: #3498db; color: white; padding: 2px 6px; border-radius: 3px;">${departure.route_id}</span><br>
                 → ${departure.trip_headsign}<br>
-                <strong>Departure: ${departureTime.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}</strong><br>
+                <strong>Departure: ${departureTimeDisplay}</strong><br>
                 <small>Click for trip details</small>
             `);
 
@@ -254,14 +266,26 @@ class UIManager {
         }
 
         const departureItems = departures.map((departure, index) => {
-            const departureTime = new Date(departure.stop.departure_time);
+            // Handle both time formats: ISO datetime or just time string
+            let departureTimeDisplay;
+            const departureTimeValue = departure.stop.departure_time;
+
+            if (departureTimeValue.includes('T')) {
+                // ISO datetime format
+                const departureTime = new Date(departureTimeValue);
+                departureTimeDisplay = departureTime.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+            } else {
+                // Just time format (e.g., "10:00:00")
+                departureTimeDisplay = departureTimeValue.substring(0, 5); // Extract HH:MM
+            }
+
             return `
                 <div class="departure-item" data-index="${index}" style="cursor: pointer;">
                     <div class="route">${departure.route_id}</div>
                     <h4>${departure.stop.name}</h4>
                     <div class="destination">→ ${departure.trip_headsign}</div>
                     <div class="time">
-                        Departure: ${departureTime.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}
+                        Departure: ${departureTimeDisplay}
                     </div>
                     <div style="font-size: 12px; color: #7f8c8d; margin-top: 5px;">
                         Trip ID: ${departure.trip_id}
@@ -338,8 +362,11 @@ class PublicTransportApp {
 
             const data = await PublicTransportAPI.getClosestDepartures(start, end, startTime, limit);
 
-            this.uiManager.displayDepartures(data.departures, (tripId) => this.showTripDetails(tripId));
-            this.mapManager.addDepartureMarkers(data.departures, (tripId) => this.showTripDetails(tripId));
+            // Handle both response formats: direct array or wrapped in departures property
+            const departures = Array.isArray(data) ? data : data.departures;
+
+            this.uiManager.displayDepartures(departures, (tripId) => this.showTripDetails(tripId));
+            this.mapManager.addDepartureMarkers(departures, (tripId) => this.showTripDetails(tripId));
 
         } catch (error) {
             console.error('Error searching departures:', error);
