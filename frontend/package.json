@@ -1,0 +1,19 @@
+{
+  "name": "public-transport-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for Public Transport API with Jasmine tests",
+  "main": "index.html",
+  "scripts": {
+    "test": "npm run test:open",
+    "test:open": "node test/run-tests.js",
+    "test:serve": "npx http-server . -p 3000 -o /test/SpecRunner.html",
+    "serve": "npx http-server . -p 3000 -o"
+  },
+  "keywords": ["public-transport", "frontend", "testing", "jasmine"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "open": "^8.4.0"
+  }
+}
