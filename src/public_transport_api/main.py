@@ -38,10 +38,13 @@ In a larger production project, you would split this code into multiple files/mo
 
 import math
 import sqlite3
-from flask import Flask, request, jsonify, abort
+from flask import Flask, logging, request, jsonify, abort
 from pathlib import Path
 
 app = Flask("app")
+logger = logging.getLogger("backend")
+logger.setLevel(logging.DEBUG)
+
 
 
 DATABASE_PATH = Path(__file__) / ".." / ".." / ".." / 'trips.sqlite'
@@ -204,8 +207,10 @@ def fetch_upcoming_departures_for_stop(conn, stop_id, start_time):
 
 @app.route("/public_transport/city/<city>/closest_departures", methods=["GET"])
 def api_closest_departures(city):
-    # 1) Validate city
+        # 1) Validate city
+    logger.debug("Received request for 'closest_departures' in city=%s", city)
     if city != VALID_CITY:
+        logger.warning("City '%s' is not supported. Returning 404.", city)
         return abort(404, description=f"City '{city}' is not supported.")
 
     # 2) Parse query parameters
@@ -214,40 +219,49 @@ def api_closest_departures(city):
     start_time        = request.args.get("start_time")
     limit             = request.args.get("limit", default="5")
 
-    # Required: start_coordinates and end_coordinates
+    # Required: start_coordinates, end_coordinates
     if not start_coordinates or not end_coordinates:
+        logger.error("Missing required query params 'start_coordinates' or 'end_coordinates'.")
         return abort(400, description="Missing required query params 'start_coordinates' or 'end_coordinates'.")
 
     # Fallback for start_time if omitted
     if not start_time:
         start_time = "2025-04-02T08:00:00Z"
+        logger.debug("No start_time provided. Using default=%s", start_time)
 
     # Convert limit to integer
     try:
         limit = int(limit)
     except ValueError:
+        logger.error("Query param 'limit' must be an integer. Received=%s", limit)
         return abort(400, description="Query param 'limit' must be an integer.")
 
-    # Parse start_coordinates and end_coordinates, e.g. "51.1079,17.0385"
+    # Parse coordinates, e.g., "51.1079,17.0385"
     try:
         start_lat, start_lon = [float(x.strip()) for x in start_coordinates.split(",")]
         end_lat, end_lon     = [float(x.strip()) for x in end_coordinates.split(",")]
     except (ValueError, IndexError):
+        logger.error("Invalid coordinates format. Must be 'lat,lon'. Got start=%s end=%s",
+                    start_coordinates, end_coordinates)
         return abort(400, description="Invalid coordinates format. Must be 'lat,lon'.")
 
     # 3) Connect to DB
+    logger.debug("Connecting to DB to find near stops. start=(%s, %s), end=(%s, %s)",
+                start_lat, start_lon, end_lat, end_lon)
     conn = get_db_connection()
 
-    # 4) Approximate bounding box for your search radius (e.g. 1 km)
-    #    Note: 1 degree of latitude is ~111 km, so 1 km ~ 0.009 degrees of latitude.
+    # 4) Approximate bounding box for search radius
     search_radius_km = 1.0
-    delta = search_radius_km * 0.009  # crude approximation
+    delta = search_radius_km * 0.009  # 1 km ~ 0.009 lat-deg (rough)
     lat_min = start_lat - delta
     lat_max = start_lat + delta
     lon_min = start_lon - delta
     lon_max = start_lon + delta
 
-    # Query only stops within that bounding box
+    logger.debug("Bounding Box for ~%skm: lat=[%s, %s], lon=[%s, %s]",
+                search_radius_km, lat_min, lat_max, lon_min, lon_max)
+
+    # Query only stops in bounding box
     stops_query = """
         SELECT stop_id, stop_name, stop_lat, stop_lon
         FROM stops
@@ -256,15 +270,17 @@ def api_closest_departures(city):
     """
     cursor = conn.execute(stops_query, (lat_min, lat_max, lon_min, lon_max))
     candidate_stops = cursor.fetchall()
+    logger.info("Found %s candidate stops in bounding box.", len(candidate_stops))
 
-    # Filter by actual distance (Haversine) to ensure they’re within 1 km
+    # Filter by actual distance
     nearby_stops = []
     for row in candidate_stops:
         try:
             s_lat = float(row["stop_lat"])
             s_lon = float(row["stop_lon"])
         except (ValueError, TypeError):
-            continue  # skip invalid coords
+            logger.debug("Skipping stop_id=%s due to invalid lat/lon.", row["stop_id"])
+            continue
         
         dist_km = haversine_distance(start_lat, start_lon, s_lat, s_lon)
         if dist_km <= search_radius_km:
@@ -276,19 +292,27 @@ def api_closest_departures(city):
                 "distance":  dist_km
             })
 
-    # Sort nearby stops by distance ascending
+    logger.info("After precise distance check, %s stops are within %.2fkm.",
+                len(nearby_stops), search_radius_km)
+
+    # Sort stops by distance ascending
     nearby_stops.sort(key=lambda x: x["distance"])
 
     # 5) For each nearby stop, fetch upcoming departures & filter by "heading toward" destination
     results = []
     for stop_info in nearby_stops:
         departures_for_stop = fetch_upcoming_departures_for_stop(conn, stop_info["stop_id"], start_time)
+        logger.debug("Stop_id=%s: fetched %s upcoming departures before filtering.",
+                    stop_info["stop_id"], len(departures_for_stop))
         
-        # Filter the departures that are heading toward the destination
+        # Filter departures that are heading toward the destination
         valid_departures = []
         for dep in departures_for_stop:
             if is_trip_heading_toward(conn, dep["trip_id"], (start_lat, start_lon), (end_lat, end_lon)):
                 valid_departures.append(dep)
+        
+        logger.debug("Stop_id=%s: %s departures remain after heading check.",
+                    stop_info["stop_id"], len(valid_departures))
         
         # Convert each departure into the final response format
         for dep in valid_departures:
@@ -317,7 +341,8 @@ def api_closest_departures(city):
         return haversine_distance(start_lat, start_lon, lat, lon)
     results.sort(key=get_distance)
 
-    # Limit the final list
+    # Limit final list
+    logger.info("Total results before limiting: %s", len(results))
     results = results[:limit]
 
     # 6) Build and return JSON
@@ -342,6 +367,7 @@ def api_closest_departures(city):
         "departures": results
     }
 
+    logger.debug("Returning %s departures in final response.", len(results))
     return jsonify(response_body), 200
 
 
