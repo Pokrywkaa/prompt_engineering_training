@@ -381,10 +381,20 @@ class PublicTransportApp {
 
     async showTripDetails(tripId) {
         try {
+            console.log('Fetching trip details for trip ID:', tripId);
             const data = await PublicTransportAPI.getTripDetails(tripId);
-            this.displayTripRoute(data.trip_details);
+            console.log('Trip details response:', data);
+
+            // Check if the response has the expected structure
+            if (data && data.trip_details) {
+                this.displayTripRoute(data.trip_details);
+            } else {
+                console.error('Invalid response structure:', data);
+                alert('Invalid trip details response format');
+            }
         } catch (error) {
             console.error('Error fetching trip details:', error);
+            console.error('Trip ID that failed:', tripId);
             alert(MESSAGES.TRIP_DETAILS_ERROR);
         }
     }
@@ -438,11 +448,19 @@ class PublicTransportApp {
                 ? new Date(stop.departure_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})
                 : stop.departure_time.substring(0, 5);
 
+            // Handle coordinates that might be strings or numbers
+            const lat = typeof stop.coordinates.latitude === 'string'
+                ? parseFloat(stop.coordinates.latitude).toFixed(4)
+                : stop.coordinates.latitude.toFixed(4);
+            const lng = typeof stop.coordinates.longitude === 'string'
+                ? parseFloat(stop.coordinates.longitude).toFixed(4)
+                : stop.coordinates.longitude.toFixed(4);
+
             return `
                 <div style="padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <div style="font-weight: 500;">${stop.name}</div>
-                        <div style="font-size: 12px; color: #666;">Lat: ${stop.coordinates.latitude.toFixed(4)}, Lng: ${stop.coordinates.longitude.toFixed(4)}</div>
+                        <div style="font-size: 12px; color: #666;">Lat: ${lat}, Lng: ${lng}</div>
                     </div>
                     <div style="text-align: right; font-size: 14px;">
                         <div>Arr: ${arrivalTime}</div>
