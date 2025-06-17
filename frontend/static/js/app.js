@@ -390,9 +390,128 @@ class PublicTransportApp {
     }
 
     displayTripRoute(tripDetails) {
-        // Placeholder for route visualization
-        // In a full implementation, you would draw the route on the map
-        alert(`Trip Route: ${tripDetails.trip_headsign}\nStops: ${tripDetails.stops.length}\nRoute ID: ${tripDetails.route_id}`);
+        // Create a nice modal popup for trip details
+        this.showTripModal(tripDetails);
+    }
+
+    showTripModal(tripDetails) {
+        // Remove any existing modal
+        const existingModal = document.getElementById('tripModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        // Create modal HTML
+        const modal = document.createElement('div');
+        modal.id = 'tripModal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = `
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            position: relative;
+        `;
+
+        // Generate stops list
+        const stopsHtml = tripDetails.stops.map((stop, index) => {
+            const arrivalTime = stop.arrival_time.includes('T')
+                ? new Date(stop.arrival_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})
+                : stop.arrival_time.substring(0, 5);
+            const departureTime = stop.departure_time.includes('T')
+                ? new Date(stop.departure_time).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})
+                : stop.departure_time.substring(0, 5);
+
+            return `
+                <div style="padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 500;">${stop.name}</div>
+                        <div style="font-size: 12px; color: #666;">Lat: ${stop.coordinates.latitude.toFixed(4)}, Lng: ${stop.coordinates.longitude.toFixed(4)}</div>
+                    </div>
+                    <div style="text-align: right; font-size: 14px;">
+                        <div>Arr: ${arrivalTime}</div>
+                        <div>Dep: ${departureTime}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        modalContent.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+                <h2 style="margin: 0; color: #2c3e50;">Trip Details</h2>
+                <button id="closeModal" style="background: #e74c3c; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;">&times;</button>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                    <div style="background: #3498db; color: white; padding: 5px 10px; border-radius: 5px; font-weight: bold;">
+                        Route ${tripDetails.route_id}
+                    </div>
+                    <div style="background: #2ecc71; color: white; padding: 5px 10px; border-radius: 5px;">
+                        Trip ${tripDetails.trip_id}
+                    </div>
+                </div>
+                <div style="font-size: 18px; font-weight: 500; color: #2c3e50;">
+                    → ${tripDetails.trip_headsign}
+                </div>
+                <div style="font-size: 14px; color: #7f8c8d; margin-top: 5px;">
+                    ${tripDetails.stops.length} stops on this route
+                </div>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 16px;">Route Stops:</h3>
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; padding: 10px;">
+                    ${stopsHtml}
+                </div>
+            </div>
+
+            <div style="text-align: center;">
+                <button id="closeModalBtn" style="background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px;">
+                    Close
+                </button>
+            </div>
+        `;
+
+        modal.appendChild(modalContent);
+        document.body.appendChild(modal);
+
+        // Add event listeners to close modal
+        const closeModal = () => modal.remove();
+        document.getElementById('closeModal').addEventListener('click', closeModal);
+        document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        // Close modal with Escape key
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
     }
 }
 
