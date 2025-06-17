@@ -1,67 +1,63 @@
 from flask import Flask, jsonify, request
-import sqlite3
-from datetime import datetime
+from models import get_trip_details, get_closest_departures
 
 app = Flask(__name__)
 
-def get_db_connection():
-    conn = sqlite3.connect('trips.sqlite')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-@app.route('/public_transport/city/<city>/closest_departures', methods=['GET'])
-def get_closest_departures(city):
-    start_coordinates = request.args.get('start_coordinates')
-    end_coordinates = request.args.get('end_coordinates')
-    start_time = request.args.get('start_time')
-    limit = request.args.get('limit', default=3, type=int)
-
-    conn = get_db_connection()
-    query = """
-    SELECT st.trip_id, t.route_id, t.trip_headsign, s.stop_name, s.stop_lat, s.stop_lon, st.arrival_time, st.departure_time
-    FROM stop_times st
-    JOIN stops s ON st.stop_id = s.stop_id
-    JOIN trips t ON st.trip_id = t.trip_id
-    WHERE time(st.arrival_time) >= time(?)
-    ORDER BY time(st.arrival_time)
-    LIMIT ?
-    """
-    departures = conn.execute(query, (start_time[11:19], limit)).fetchall()
-    conn.close()
-
-    response = {
+@app.route("/public_transport/city/<city>/trip/<trip_id>")
+def trip_details(city, trip_id):
+    trip, stops = get_trip_details(trip_id)
+    if not trip:
+        return jsonify({"error": "Trip not found"}), 404
+    return jsonify({
         "metadata": {
-            "self": request.url,
+            "self": request.path,
             "city": city,
-            "query_parameters": {
-                "start_coordinates": start_coordinates,
-                "end_coordinates": end_coordinates,
-                "start_time": start_time,
-                "limit": limit
-            }
+            "query_parameters": {"trip_id": trip_id}
         },
-        "departures": []
-    }
-
-    for row in departures:
-        arrival_iso = f"{start_time[:10]}T{row['arrival_time']}Z"
-        departure_iso = f"{start_time[:10]}T{row['departure_time']}Z"
-        response["departures"].append({
-            "trip_id": row["trip_id"],
-            "route_id": row["route_id"],
-            "trip_headsign": row["trip_headsign"],
-            "stop": {
-                "name": row["stop_name"],
+        "trip_details": {
+            "trip_id": trip["trip_id"],
+            "route_id": trip["route_id"],
+            "trip_headsign": trip["trip_headsign"],
+            "stops": [{
+                "name": stop["stop_name"],
                 "coordinates": {
-                    "latitude": row["stop_lat"],
-                    "longitude": row["stop_lon"]
+                    "latitude": stop["stop_lat"],
+                    "longitude": stop["stop_lon"]
                 },
-                "arrival_time": arrival_iso,
-                "departure_time": departure_iso
-            }
+                "arrival_time": f"2025-04-02T{stop['arrival_time']}Z",
+                "departure_time": f"2025-04-02T{stop['departure_time']}Z"
+            } for stop in stops]
+        }
+    })
+
+@app.route("/public_transport/city/<city>/closest_departures")
+def closest_departures(city):
+    try:
+        start_coords = request.args.get("start_coordinates")
+        end_coords = request.args.get("end_coordinates")
+        start_time = request.args.get("start_time")
+        limit = int(request.args.get("limit", 3))
+
+        start_lat, start_lon = map(float, start_coords.split(","))
+        end_lat, end_lon = map(float, end_coords.split(","))
+
+        departures = get_closest_departures(start_lat, start_lon, end_lat, end_lon, start_time, limit)
+
+        return jsonify({
+            "metadata": {
+                "self": request.full_path,
+                "city": city,
+                "query_parameters": {
+                    "start_coordinates": start_coords,
+                    "end_coordinates": end_coords,
+                    "start_time": start_time,
+                    "limit": limit
+                }
+            },
+            "departures": departures
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-    return jsonify(response)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
