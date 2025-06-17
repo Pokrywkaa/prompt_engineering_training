@@ -39,7 +39,7 @@ class PublicTransportAPI {
             limit: limit
         });
 
-        const response = await fetch(`${CONFIG.API_BASE_URL}/closest_departures/?${params}`);
+        const response = await fetch(`${CONFIG.API_BASE_URL}/closest_departures?${params}`);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -49,7 +49,7 @@ class PublicTransportAPI {
     }
 
     static async getTripDetails(tripId) {
-        const response = await fetch(`${CONFIG.API_BASE_URL}/trip/${tripId}`);
+        const response = await fetch(`${CONFIG.API_BASE_URL}/trip${tripId}`);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
