@@ -36,9 +36,10 @@ The schema references the columns shown in the question for 'stops', 'stop_times
 
 In a larger production project, you would split this code into multiple files/modules, add robust error handling, logging, caching, etc. """
 
+import logging
 import math
 import sqlite3
-from flask import Flask, logging, request, jsonify, abort
+from flask import Flask, request, jsonify, abort
 from pathlib import Path
 
 app = Flask("app")
@@ -207,10 +208,8 @@ def fetch_upcoming_departures_for_stop(conn, stop_id, start_time):
 
 @app.route("/public_transport/city/<city>/closest_departures", methods=["GET"])
 def api_closest_departures(city):
-        # 1) Validate city
-    logger.debug("Received request for 'closest_departures' in city=%s", city)
+    # 1) Validate city
     if city != VALID_CITY:
-        logger.warning("City '%s' is not supported. Returning 404.", city)
         return abort(404, description=f"City '{city}' is not supported.")
 
     # 2) Parse query parameters
@@ -219,144 +218,253 @@ def api_closest_departures(city):
     start_time        = request.args.get("start_time")
     limit             = request.args.get("limit", default="5")
 
-    # Required: start_coordinates, end_coordinates
+    # Required
     if not start_coordinates or not end_coordinates:
-        logger.error("Missing required query params 'start_coordinates' or 'end_coordinates'.")
         return abort(400, description="Missing required query params 'start_coordinates' or 'end_coordinates'.")
 
-    # Fallback for start_time if omitted
+    # Default start_time if omitted
     if not start_time:
         start_time = "2025-04-02T08:00:00Z"
-        logger.debug("No start_time provided. Using default=%s", start_time)
 
-    # Convert limit to integer
     try:
         limit = int(limit)
     except ValueError:
-        logger.error("Query param 'limit' must be an integer. Received=%s", limit)
-        return abort(400, description="Query param 'limit' must be an integer.")
+        return abort(400, description="Query param 'limit' must be integer.")
 
-    # Parse coordinates, e.g., "51.1079,17.0385"
+    # Parse coords
     try:
         start_lat, start_lon = [float(x.strip()) for x in start_coordinates.split(",")]
         end_lat, end_lon     = [float(x.strip()) for x in end_coordinates.split(",")]
     except (ValueError, IndexError):
-        logger.error("Invalid coordinates format. Must be 'lat,lon'. Got start=%s end=%s",
-                    start_coordinates, end_coordinates)
         return abort(400, description="Invalid coordinates format. Must be 'lat,lon'.")
 
+    # Extract "HH:MM:SS" from the user’s start_time (naive approach)
+    # e.g. "2025-04-02T08:30:00Z" => "08:30:00"
+    # In real usage you'd also check for time zones, next-day, etc.
+    hhmmss = start_time.split("T")[1].replace("Z","")
+    # If there's any fraction or timezone, remove it:
+    hhmmss = hhmmss.split(".")[0].split("+")[0]
+
     # 3) Connect to DB
-    logger.debug("Connecting to DB to find near stops. start=(%s, %s), end=(%s, %s)",
-                start_lat, start_lon, end_lat, end_lon)
     conn = get_db_connection()
 
-    # 4) Approximate bounding box for search radius
+    # 4) BOUNDING BOX: avoid scanning all stops
+    # ~1 km => ~0.009 degrees latitude (roughly)
     search_radius_km = 1.0
-    delta = search_radius_km * 0.009  # 1 km ~ 0.009 lat-deg (rough)
+    delta = 0.009 * search_radius_km
     lat_min = start_lat - delta
     lat_max = start_lat + delta
     lon_min = start_lon - delta
     lon_max = start_lon + delta
 
-    logger.debug("Bounding Box for ~%skm: lat=[%s, %s], lon=[%s, %s]",
-                search_radius_km, lat_min, lat_max, lon_min, lon_max)
-
-    # Query only stops in bounding box
-    stops_query = """
+    # Fetch candidate stops in bounding box
+    sql_stops_bbox = """
         SELECT stop_id, stop_name, stop_lat, stop_lon
         FROM stops
         WHERE stop_lat BETWEEN ? AND ?
         AND stop_lon BETWEEN ? AND ?
     """
-    cursor = conn.execute(stops_query, (lat_min, lat_max, lon_min, lon_max))
-    candidate_stops = cursor.fetchall()
-    logger.info("Found %s candidate stops in bounding box.", len(candidate_stops))
+    stops_cursor = conn.execute(sql_stops_bbox, (lat_min, lat_max, lon_min, lon_max))
+    candidate_stops = stops_cursor.fetchall()
 
-    # Filter by actual distance
     nearby_stops = []
     for row in candidate_stops:
         try:
             s_lat = float(row["stop_lat"])
             s_lon = float(row["stop_lon"])
         except (ValueError, TypeError):
-            logger.debug("Skipping stop_id=%s due to invalid lat/lon.", row["stop_id"])
             continue
-        
         dist_km = haversine_distance(start_lat, start_lon, s_lat, s_lon)
         if dist_km <= search_radius_km:
             nearby_stops.append({
-                "stop_id":   row["stop_id"],
+                "stop_id": row["stop_id"],
                 "stop_name": row["stop_name"],
-                "stop_lat":  s_lat,
-                "stop_lon":  s_lon,
-                "distance":  dist_km
+                "stop_lat": s_lat,
+                "stop_lon": s_lon,
+                "distance": dist_km
             })
 
-    logger.info("After precise distance check, %s stops are within %.2fkm.",
-                len(nearby_stops), search_radius_km)
+    # If no stops are nearby, return empty
+    if not nearby_stops:
+        resp = {
+            "metadata": {
+                "self": request.url,
+                "city": city,
+                "query_parameters": {
+                    "start_coordinates": start_coordinates,
+                    "end_coordinates": end_coordinates,
+                    "start_time": start_time,
+                    "limit": limit
+                }
+            },
+            "departures": []
+        }
+        conn.close()
+        return jsonify(resp), 200
 
-    # Sort stops by distance ascending
+    # Sort the nearby stops by distance
     nearby_stops.sort(key=lambda x: x["distance"])
 
-    # 5) For each nearby stop, fetch upcoming departures & filter by "heading toward" destination
-    results = []
-    for stop_info in nearby_stops:
-        departures_for_stop = fetch_upcoming_departures_for_stop(conn, stop_info["stop_id"], start_time)
-        logger.debug("Stop_id=%s: fetched %s upcoming departures before filtering.",
-                    stop_info["stop_id"], len(departures_for_stop))
-        
-        # Filter departures that are heading toward the destination
-        valid_departures = []
-        for dep in departures_for_stop:
-            if is_trip_heading_toward(conn, dep["trip_id"], (start_lat, start_lon), (end_lat, end_lon)):
-                valid_departures.append(dep)
-        
-        logger.debug("Stop_id=%s: %s departures remain after heading check.",
-                    stop_info["stop_id"], len(valid_departures))
-        
-        # Convert each departure into the final response format
-        for dep in valid_departures:
-            item = {
-                "trip_id": dep["trip_id"],
-                "route_id": dep["route_id"],
-                "trip_headsign": dep["trip_headsign"],
-                "stop": {
-                    "name": stop_info["stop_name"],
-                    "coordinates": {
-                        "latitude": stop_info["stop_lat"],
-                        "longitude": stop_info["stop_lon"]
-                    },
-                    "arrival_time": f"{start_time[:10]}T{dep['arrival_time']}Z",
-                    "departure_time": f"{start_time[:10]}T{dep['departure_time']}Z"
+    # 5) Single query for upcoming departures from all these stops
+    #    Build an IN clause for the stop_id set
+    nearby_stop_ids = [s["stop_id"] for s in nearby_stops]
+    placeholders = ",".join(["?"] * len(nearby_stop_ids))  # e.g. "?,?,?" if 3 stops
+    sql_departures = f"""
+        SELECT 
+            st.trip_id,
+            st.arrival_time,
+            st.departure_time,
+            st.stop_id,
+            t.route_id,
+            t.trip_headsign
+        FROM stop_times st
+        JOIN trips t ON st.trip_id = t.trip_id
+        WHERE st.stop_id IN ({placeholders})
+        AND st.departure_time >= ?
+        ORDER BY st.departure_time ASC
+        LIMIT 10000
+    """
+    # We do a large LIMIT to prevent runaway queries. Adjust as needed.
+    params = nearby_stop_ids + [hhmmss]
+    dep_cursor = conn.execute(sql_departures, params)
+    all_departures = dep_cursor.fetchall()
+
+    if not all_departures:
+        # No upcoming departures => empty
+        resp = {
+            "metadata": {
+                "self": request.url,
+                "city": city,
+                "query_parameters": {
+                    "start_coordinates": start_coordinates,
+                    "end_coordinates": end_coordinates,
+                    "start_time": start_time,
+                    "limit": limit
                 }
-            }
-            results.append(item)
+            },
+            "departures": []
+        }
+        conn.close()
+        return jsonify(resp), 200
+
+    # 6) For each trip_id, we need the location of its final stop to see if
+    #    it's heading generally "closer" to the end.
+    #    We'll gather unique trip_ids, then fetch final-stop coords in one query.
+    trip_ids = list({row["trip_id"] for row in all_departures})
+
+    placeholders_trips = ",".join(["?"] * len(trip_ids))
+    sql_final_stop = f"""
+        SELECT 
+            st.trip_id,
+            s.stop_lat AS final_stop_lat,
+            s.stop_lon AS final_stop_lon
+        FROM stop_times st
+        JOIN stops s ON st.stop_id = s.stop_id
+        WHERE (st.trip_id, CAST(st.stop_sequence AS INTEGER)) IN (
+            SELECT trip_id, MAX(CAST(stop_sequence AS INTEGER))
+            FROM stop_times
+            WHERE trip_id IN ({placeholders_trips})
+            GROUP BY trip_id
+        )
+    """
+    final_cursor = conn.execute(sql_final_stop, trip_ids)
+    final_stops_data = final_cursor.fetchall()
+
+    # Put final-stop lat/lon in a dictionary: { trip_id: (lat, lon) }
+    final_stop_map = {}
+    for row in final_stops_data:
+        t_id = row["trip_id"]
+        try:
+            latf = float(row["final_stop_lat"])
+            lonf = float(row["final_stop_lon"])
+            final_stop_map[t_id] = (latf, lonf)
+        except (ValueError, TypeError):
+            final_stop_map[t_id] = None
 
     conn.close()
 
-    # Sort final results by distance from user’s start
-    def get_distance(dep):
-        lat = dep["stop"]["coordinates"]["latitude"]
-        lon = dep["stop"]["coordinates"]["longitude"]
-        return haversine_distance(start_lat, start_lon, lat, lon)
-    results.sort(key=get_distance)
+    # 7) Filter departures for "heading toward" the end
+    #    We'll check if final_stop is closer to the end than to the start.
+    def is_heading_toward(t_id):
+        coords = final_stop_map.get(t_id)
+        if not coords:
+            return False
+        last_lat, last_lon = coords
+        dist_from_start = haversine_distance(start_lat, start_lon, last_lat, last_lon)
+        dist_from_end   = haversine_distance(end_lat, end_lon, last_lat, last_lon)
+        return dist_from_end < dist_from_start
 
-    # Limit final list
-    logger.info("Total results before limiting: %s", len(results))
-    results = results[:limit]
+    # Convert all_departures to final structure
+    # We'll merge them with the nearby_stops data to get stop_name & distance
+    # so we can do a final sort & limit.
 
-    # 6) Build and return JSON
+    # First, build a quick map: stop_id => (stop_name, lat, lon, distance)
+    stop_map = { st["stop_id"]: st for st in nearby_stops }
+
+    result_list = []
+    for row in all_departures:
+        trip_id = row["trip_id"]
+        if not is_heading_toward(trip_id):
+            continue
+        sid  = row["stop_id"]
+        info = stop_map.get(sid)  # Could be None if data mismatch
+        if not info:
+            continue
+        
+        # We'll store the departure item
+        result_item = {
+            "trip_id": trip_id,
+            "route_id": row["route_id"],
+            "trip_headsign": row["trip_headsign"],
+            "stop": {
+                "name": info["stop_name"],
+                "coordinates": {
+                    "latitude": info["stop_lat"],
+                    "longitude": info["stop_lon"]
+                },
+                # Reconstruct ISO 8601
+                "arrival_time": f"{start_time[:10]}T{row['arrival_time']}Z",
+                "departure_time": f"{start_time[:10]}T{row['departure_time']}Z"
+            },
+            "distance_from_start": info["distance"]  # optional, for sort
+        }
+        result_list.append(result_item)
+
+    # 8) Sort the final results by distance from start, then by earliest departure
+    #    We already have distance_from_start. We'll also parse HH:MM:SS for departure sorting
+    def parse_time(t_str):
+        # "HH:MM:SS" -> (HH, MM, SS)
+        h, m, s = t_str.split(":")
+        return int(h)*3600 + int(m)*60 + int(s)
+
+    def sort_key(item):
+        dist = item["distance_from_start"]
+        # item["stop"]["departure_time"] looks like YYYY-MM-DDTHH:MM:SSZ
+        # We'll cut out the time portion => HH:MM:SS from substring
+        dep_time_str = item["stop"]["departure_time"][11:19]  # "HH:MM:SS"
+        t_val = parse_time(dep_time_str)
+        return (dist, t_val)
+
+    result_list.sort(key=sort_key)
+
+    # 9) Limit the final results
+    result_list = result_list[:limit]
+
+    # 10) Build the JSON response
     query_parameters = {
         "start_coordinates": start_coordinates,
         "end_coordinates": end_coordinates,
         "start_time": start_time,
         "limit": limit
     }
-    self_url = (f"/public_transport/city/{city}/closest_departures"
-                f"?start_coordinates={start_coordinates}"
-                f"&end_coordinates={end_coordinates}"
-                f"&start_time={start_time}"
-                f"&limit={limit}")
+
+    self_url = (
+        f"/public_transport/city/{city}/closest_departures_optimized"
+        f"?start_coordinates={start_coordinates}"
+        f"&end_coordinates={end_coordinates}"
+        f"&start_time={start_time}"
+        f"&limit={limit}"
+    )
 
     response_body = {
         "metadata": {
@@ -364,12 +472,14 @@ def api_closest_departures(city):
             "city": city,
             "query_parameters": query_parameters
         },
-        "departures": results
+        "departures": [
+            # drop 'distance_from_start' from final output if you want
+            {k: v for k, v in item.items() if k != "distance_from_start"}
+            for item in result_list
+        ]
     }
 
-    logger.debug("Returning %s departures in final response.", len(results))
     return jsonify(response_body), 200
-
 
 @app.route("/")
 def index():
