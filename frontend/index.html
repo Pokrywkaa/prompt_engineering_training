@@ -3,42 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple API Caller</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="styles.css">
+    <title>Wrocław Public Transport</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="static/css/styles.css">
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-<div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-2xl">
-    <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Simple API Caller</h1>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚌 Wrocław Public Transport</h1>
+            <p>Find the best routes and departures</p>
+        </div>
 
-    <div class="mb-6">
-        <label for="api-endpoint-selector" class="block text-gray-700 text-sm font-bold mb-2">Select API Endpoint:</label>
-        <select id="api-endpoint-selector"
-                class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <option value="http://localhost:5001/public_transport/city/wroclaw/closest_departures">Closest Departures (Wroclaw)</option>
-            <option value="http://localhost:5001/public_transport/city/wroclaw/trip/3_14613060">Trip Details (Trip ID: 3_14613060)</option>
-        </select>
-        <p class="text-xs text-gray-500 mt-1">
-            Choose an API endpoint to call.
-        </p>
+        <div class="controls">
+            <div class="control-group">
+                <label>Departure Time</label>
+                <input type="datetime-local" id="startTime">
+            </div>
+
+            <div class="control-group">
+                <label>Max Results</label>
+                <select id="limit">
+                    <option value="3">3</option>
+                    <option value="5" selected>5</option>
+                    <option value="10">10</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Search Radius</label>
+                <select id="radius">
+                    <option value="500">500m</option>
+                    <option value="1000" selected>1km</option>
+                    <option value="2000">2km</option>
+                </select>
+            </div>
+
+            <button class="search-btn" id="searchBtn">🔍 Find Departures</button>
+        </div>
+
+        <div class="content">
+            <div id="map"></div>
+            <div class="results">
+                <h3>Departures</h3>
+                <div id="departuresList">
+                    <div class="status">
+                        Select start and destination points on the map, then click "Find Departures"
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <button id="call-api-btn"
-            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-200 ease-in-out transform hover:scale-105">
-        Call API
-    </button>
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
 
-    <div id="status-message" class="mt-4 text-center text-sm text-gray-600"></div>
-
-    <div class="mt-6">
-        <label for="json-output" class="block text-gray-700 text-sm font-bold mb-2">API Response (JSON):</label>
-        <textarea id="json-output"
-                  class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent h-64 font-mono text-sm"
-                  readonly
-                  placeholder="API response will appear here..."></textarea>
-    </div>
-</div>
-
-<script src="script.js"></script>
+    <!-- Custom JavaScript -->
+    <script src="static/js/app.js"></script>
 </body>
 </html>
