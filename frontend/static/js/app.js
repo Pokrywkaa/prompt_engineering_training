@@ -49,7 +49,10 @@ class PublicTransportAPI {
     }
 
     static async getTripDetails(tripId) {
-        const response = await fetch(`${CONFIG.API_BASE_URL}/trip${tripId}`);
+        // Ensure proper URL construction with explicit path segments
+        const baseUrl = CONFIG.API_BASE_URL.replace(/\/$/, ''); // Remove trailing slash if present
+        const url = `${baseUrl}/trip/${tripId}`;
+        const response = await fetch(url);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
